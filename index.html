@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Grid-based Fluid Simulation (JS)</title>
+  <style>
+    body { margin:0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background:#111; color:#eee; display:flex; height:100vh; }
+    #ui { width:320px; padding:16px; box-sizing:border-box; background:linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02)); border-right:1px solid rgba(255,255,255,0.03); }
+    #canvasWrap { flex:1; display:flex; align-items:center; justify-content:center; }
+    canvas { background:#05060a; image-rendering:pixelated; }
+    label { display:block; margin:8px 0 4px; font-size:13px; color:#ddd }
+    input[type=range] { width:100%; }
+    button { margin-right:8px; margin-top:8px; padding:8px 10px; background:#222; color:#eee; border:1px solid rgba(255,255,255,0.04); border-radius:6px; cursor:pointer }
+    .row { display:flex; gap:8px; align-items:center }
+    .small { font-size:12px; color:#bbb }
+    .hint { font-size:12px; color:#9aa; margin-top:8px }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <h2>Fluid sim — grid based</h2>
+    <div class="row"><button id="modeDensity">Add Density</button><button id="modeVelocity">Add Velocity</button><button id="modeObstacle">Toggle Obstacles</button></div>
+    <div class="row"><button id="clearObstacles">Clear Obstacles</button><button id="reset">Reset</button></div>
+
+    <label>Grid size: <span id="gridSizeLabel">64</span></label>
+    <input id="gridSize" type="range" min="32" max="200" value="64" step="1">
+
+    <label>Viscosity: <span id="viscLabel">0.0001</span></label>
+    <input id="visc" type="range" min="0" max="0.1" step="0.0001" value="0.0001">
+
+    <label>Diffusion: <span id="diffLabel">0.00001</span></label>
+    <input id="diff" type="range" min="0" max="0.01" step="0.00001" value="0.00001">
+
+    <label>Force scale: <span id="forceLabel">5000</span></label>
+    <input id="force" type="range" min="10" max="10000" step="10" value="5000">
+
+    <label>Source amount: <span id="sourceLabel">100</span></label>
+    <input id="source" type="range" min="1" max="1000" step="1" value="100">
+
+    <label>Display: </label>
+    <div class="row">
+      <label style="display:inline-flex;align-items:center"><input id="showVelocity" type="checkbox"> <span class="small">Velocity</span></label>
+      <label style="display:inline-flex;align-items:center"><input id="showDensity" type="checkbox" checked> <span class="small">Density</span></label>
+      <label style="display:inline-flex;align-items:center"><input id="showObstacles" type="checkbox" checked> <span class="small">Obstacles</span></label>
+    </div>
+
+    <p class="hint">Click and drag to paint. Shift+drag to add velocity in the drag direction. Use <code>Toggle Obstacles</code> then click to place/remove solid cells.</p>
+    <p class="hint small">This uses a stable fluid solver (diffuse, project, advect). It's intended for educational / demo purposes.</p>
+  </div>
+  <div id="canvasWrap">
+    <canvas id="c"></canvas>
+  </div>
+
+<script>
+/* Stable fluid implementation (2D grid). Adapted for clarity and interactivity. */
+// Utility helpers
+function idx(x,y,N){ x = Math.max(0, Math.min(N-1, x)); y = Math.max(0, Math.min(N-1, y)); return x + y * N; }
+
+class Fluid {
+  constructor(N, dt, diff, visc){
+    this.N = N; this.dt = dt; this.diff = diff; this.visc = visc;
+    const size = N*N;
+    this.s = new Float32Array(size); // temp for density
+    this.density = new Float32Array(size);
+
+    this.Vx = new Float32Array(size);
+    this.Vy = new Float32Array(size);
+    this.Vx0 = new Float32Array(size);
+    this.Vy0 = new Float32Array(size);
+
+    this.solid = new Uint8Array(size); // obstacle map, 1 = solid
+  }
+
+  addDensity(x,y,amount){
+    const id = idx(x,y,this.N);
+    if(!this.solid[id]) this.density[id] += amount;
+  }
+  addVelocity(x,y,amountX,amountY){
+    const id = idx(x,y,this.N);
+    if(!this.solid[id]){ this.Vx[id] += amountX; this.Vy[id] += amountY; }
+  }
+
+  step(){
+    const N = this.N, dt = this.dt;
+    // velocity step
+    this.diffuse(1, this.Vx0, this.Vx, this.visc, dt);
+    this.diffuse(2, this.Vy0, this.Vy, this.visc, dt);
+    this.project(this.Vx0, this.Vy0, this.Vx, this.Vy);
+    this.advect(1, this.Vx, this.Vx0, this.Vx0, this.Vy0, dt);
+    this.advect(2, this.Vy, this.Vy0, this.Vx0, this.Vy0, dt);
+    this.project(this.Vx, this.Vy, this.Vx0, this.Vy0);
+
+    // density step
+    this.diffuse(0, this.s, this.density, this.diff, dt);
+    this.advect(0, this.density, this.s, this.Vx, this.Vy, dt);
+
+    // enforce solids: zero velocity and density into solids
+    for(let i=0;i<N*N;i++){
+      if(this.solid[i]){ this.Vx[i]=0; this.Vy[i]=0; this.density[i]=0; }
+    }
+  }
+
+  // linear solver: diffuse quantities
+  diffuse(b, x, x0, diff, dt){
+    const N = this.N; const a = dt * diff * (N-2) * (N-2);
+    this.lin_solve(b, x, x0, a, 1 + 4*a);
+  }
+
+  lin_solve(b, x, x0, a, c){
+    const N = this.N;
+    // Gauss-Seidel iterations
+    for(let k=0;k<20;k++){
+      for(let j=1;j<N-1;j++){
+        for(let i=1;i<N-1;i++){
+          const id = i + j*N;
+          x[id] = (x0[id] + a*(x[id-1] + x[id+1] + x[id-N] + x[id+N]))/c;
+        }
+      }
+      this.set_bnd(b,x);
+    }
+  }
+
+  project(velocX, velocY, p, div){
+    const N = this.N;
+    const h = 1.0 / N;
+    for(let j=1;j<N-1;j++){
+      for(let i=1;i<N-1;i++){
+        const id = i + j*N;
+        div[id] = -0.5*(velocX[id+1]-velocX[id-1] + velocY[id+N]-velocY[id-N])/N;
+        p[id] = 0;
+      }
+    }
+    this.set_bnd(0,div); this.set_bnd(0,p);
+    this.lin_solve(0, p, div, 1, 4);
+    for(let j=1;j<N-1;j++){
+      for(let i=1;i<N-1;i++){
+        const id = i + j*N;
+        velocX[id] -= 0.5*(p[id+1]-p[id-1])*N;
+        velocY[id] -= 0.5*(p[id+N]-p[id-N])*N;
+      }
+    }
+    this.set_bnd(1,velocX); this.set_bnd(2,velocY);
+  }
+
+  advect(b, d, d0, velocX, velocY, dt){
+    const N = this.N; const dt0 = dt * (N-2);
+    for(let j=1;j<N-1;j++){
+      for(let i=1;i<N-1;i++){
+        let x = i - dt0 * velocX[i + j*N];
+        let y = j - dt0 * velocY[i + j*N];
+        if(x<0.5) x=0.5; if(x>N-1.5) x=N-1.5;
+        if(y<0.5) y=0.5; if(y>N-1.5) y=N-1.5;
+        const i0 = Math.floor(x); const i1 = i0+1;
+        const j0 = Math.floor(y); const j1 = j0+1;
+        const s1 = x - i0; const s0 = 1 - s1;
+        const t1 = y - j0; const t0 = 1 - t1;
+        const id = i + j*N;
+        const id00 = i0 + j0*N; const id01 = i0 + j1*N; const id10 = i1 + j0*N; const id11 = i1 + j1*N;
+        d[id] = s0*(t0*d0[id00] + t1*d0[id01]) + s1*(t0*d0[id10] + t1*d0[id11]);
+      }
+    }
+    this.set_bnd(b,d);
+  }
+
+  set_bnd(b, x){
+    const N = this.N;
+    for(let i=1;i<N-1;i++){
+      x[i] = (b===1? -x[i+N] : x[i+N]); // top
+      x[i + (N-1)*N] = (b===1? -x[i + (N-2)*N] : x[i + (N-2)*N]); // bottom
+      x[i*N] = (b===2? -x[1 + i*N] : x[1 + i*N]); // left
+      x[(N-1) + i*N] = (b===2? -x[(N-2) + i*N] : x[(N-2) + i*N]); // right
+    }
+    // corners
+    x[0] = 0.5*(x[1] + x[N]);
+    x[N-1] = 0.5*(x[N-2] + x[2*N-1]);
+    x[(N-1)*N] = 0.5*(x[(N-1)*N + 1] + x[(N-2)*N]);
+    x[N*N-1] = 0.5*(x[N*N-2] + x[N*(N-1)-1]);
+
+    // enforce solids boundary: if neighbor is solid, set velocity/density to zero at boundary
+    for(let j=1;j<N-1;j++){
+      for(let i=1;i<N-1;i++){
+        const id = i + j*N;
+        if(this.solid[id]){
+          x[id]=0;
+        }
+      }
+    }
+  }
+}
+
+// --- UI and rendering ---
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let N = parseInt(document.getElementById('gridSize').value);
+let sim = new Fluid(N, 0.016, parseFloat(document.getElementById('diff').value), parseFloat(document.getElementById('visc').value));
+
+function resizeCanvas(){
+  const maxW = window.innerWidth - 320 - 40; // account UI width and margins
+  const maxH = window.innerHeight - 40;
+  const size = Math.min(maxW, maxH);
+  canvas.width = size; canvas.height = size;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+let mouse = {x:0,y:0,px:0,py:0,down:false};
+let mode = 'density';
+
+function screenToGrid(sx, sy){
+  const rect = canvas.getBoundingClientRect();
+  const x = Math.floor((sx - rect.left) / rect.width * sim.N);
+  const y = Math.floor((sy - rect.top) / rect.height * sim.N);
+  return {x: x, y: y};
+}
+
+canvas.addEventListener('pointerdown', (e)=>{
+  canvas.setPointerCapture(e.pointerId);
+  mouse.down = true;
+  const p = screenToGrid(e.clientX, e.clientY);
+  mouse.x = p.x; mouse.y = p.y; mouse.px=p.x; mouse.py=p.y;
+  if(mode==='obstacle'){
+    const id = idx(p.x,p.y,sim.N);
+    sim.solid[id] = sim.solid[id]?0:1;
+  }
+});
+
+canvas.addEventListener('pointermove', (e)=>{
+  const p = screenToGrid(e.clientX, e.clientY);
+  if(mouse.down){
+    const dx = p.x - mouse.px; const dy = p.y - mouse.py;
+    if(mode==='density' || mode==='velocity'){
+      const steps = Math.max(Math.abs(dx), Math.abs(dy),1);
+      for(let i=0;i<steps;i++){
+        const sx = Math.round(mouse.px + dx*(i/steps));
+        const sy = Math.round(mouse.py + dy*(i/steps));
+        if(mode==='density') sim.addDensity(sx,sy, parseFloat(document.getElementById('source').value));
+        // if(mode==='velocity'){
+          const force = parseFloat(document.getElementById('force').value);
+          sim.addVelocity(sx,sy, (p.x-mouse.px)*force*0.0001, (p.y-mouse.py)*force*0.0001 );
+        // }
+      }
+    } else if(mode==='obstacle'){
+      const id = idx(p.x,p.y,sim.N);
+      sim.solid[id] = sim.solid[id]?0:1;
+    }
+    mouse.px = p.x; mouse.py = p.y;
+  }
+});
+
+canvas.addEventListener('pointerup', (e)=>{ mouse.down=false; canvas.releasePointerCapture(e.pointerId); });
+
+// UI hooks
+document.getElementById('modeDensity').onclick = ()=>{ mode='density'; }
+document.getElementById('modeVelocity').onclick = ()=>{ mode='velocity'; }
+document.getElementById('modeObstacle').onclick = ()=>{ mode='obstacle'; }
+
+document.getElementById('clearObstacles').onclick = ()=>{ sim.solid.fill(0); }
+document.getElementById('reset').onclick = ()=>{ sim = new Fluid(sim.N, sim.dt, sim.diff, sim.visc); }
+
+const gridSizeInput = document.getElementById('gridSize');
+const gridSizeLabel = document.getElementById('gridSizeLabel');
+gridSizeInput.oninput = ()=>{
+  gridSizeLabel.textContent = gridSizeInput.value;
+};
+gridSizeInput.onchange = ()=>{
+  N = parseInt(gridSizeInput.value);
+  sim = new Fluid(N, 0.016, parseFloat(document.getElementById('diff').value), parseFloat(document.getElementById('visc').value));
+}
+
+const viscInput = document.getElementById('visc'); const viscLabel = document.getElementById('viscLabel');
+viscInput.oninput = ()=>{ viscLabel.textContent = viscInput.value; sim.visc = parseFloat(viscInput.value); }
+
+const diffInput = document.getElementById('diff'); const diffLabel = document.getElementById('diffLabel');
+diffInput.oninput = ()=>{ diffLabel.textContent = diffInput.value; sim.diff = parseFloat(diffInput.value); }
+
+const forceInput = document.getElementById('force'); const forceLabel = document.getElementById('forceLabel');
+forceInput.oninput = ()=>{ forceLabel.textContent = forceInput.value; }
+
+const sourceInput = document.getElementById('source'); const sourceLabel = document.getElementById('sourceLabel');
+sourceInput.oninput = ()=>{ sourceLabel.textContent = sourceInput.value; }
+
+const showVelocity = document.getElementById('showVelocity');
+const showDensity = document.getElementById('showDensity');
+const showObstacles = document.getElementById('showObstacles');
+
+// rendering
+function draw(){
+  const N = sim.N; const w = canvas.width; const h = canvas.height; const cellW = w / N; const cellH = h / N;
+  ctx.clearRect(0,0,w,h);
+  const img = ctx.createImageData(w,h);
+  // draw density as grayscale (or color map)
+  if(showDensity.checked){
+    // for each grid cell, fill its block of pixels
+    for(let j=0;j<N;j++){
+      for(let i=0;i<N;i++){
+        const id = i + j*N;
+        const d = Math.min(255, sim.density[id]);
+        // fill cell rectangle
+        const sx = Math.floor(i*cellW), sy = Math.floor(j*cellH);
+        const ex = Math.ceil((i+1)*cellW), ey = Math.ceil((j+1)*cellH);
+        for(let y=sy;y<ey;y++){
+          for(let x=sx;x<ex;x++){
+            const p = (x + y*w) * 4;
+            img.data[p] = d*1.6; // R
+            img.data[p+1] = Math.min(255,d*0.9);
+            img.data[p+2] = Math.max(0,255-d*0.6);
+            img.data[p+3] = 255;
+          }
+        }
+      }
+    }
+  }
+  // draw obstacles overlay
+  if(showObstacles.checked){
+    for(let j=0;j<N;j++){
+      for(let i=0;i<N;i++){
+        const id = i + j*N;
+        if(sim.solid[id]){
+          const sx = Math.floor(i*cellW), sy = Math.floor(j*cellH);
+          const ex = Math.ceil((i+1)*cellW), ey = Math.ceil((j+1)*cellH);
+          for(let y=sy;y<ey;y++){
+            for(let x=sx;x<ex;x++){
+              const p = (x + y*w) * 4;
+              img.data[p]=40; img.data[p+1]=40; img.data[p+2]=40; img.data[p+3]=255;
+            }
+          }
+        }
+      }
+    }
+  }
+  ctx.putImageData(img,0,0);
+
+  // draw velocity vectors
+  if(showVelocity.checked){
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.lineWidth = 1;
+    const step = Math.max(2, Math.floor(N/24));
+    for(let j=1;j<N-1;j+=step){
+      for(let i=1;i<N-1;i+=step){
+        const id = i + j*N;
+        if(sim.solid[id]) continue;
+        const vx = sim.Vx[id]; const vy = sim.Vy[id];
+        const cx = (i+0.5)*cellW; const cy = (j+0.5)*cellH;
+        ctx.beginPath(); ctx.moveTo(cx,cy);
+        ctx.lineTo(cx + vx*cellW*4, cy + vy*cellH*4); ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+}
+
+function frame(){
+  sim.step();
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// initial smoke source
+(function seed(){
+  for(let j=sim.N/4|0;j<sim.N/2;j++){
+    for(let i=sim.N/3|0;i<sim.N*2/3;i++){
+      sim.density[i + j*sim.N] = Math.random()*30;
+    }
+  }
+})();
+
+</script>
+</body>
+</html>
