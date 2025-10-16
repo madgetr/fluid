@@ -3,28 +3,84 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Grid-based Fluid Simulation (JS)</title>
+  <title>Grid-based Color Fluid Mixer (JS)</title>
   <style>
-    body { margin:0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background:#111; color:#eee; display:flex; height:100vh; }
-    #ui { width:320px; padding:16px; box-sizing:border-box; background:linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02)); border-right:1px solid rgba(255,255,255,0.03); }
-    #canvasWrap { flex:1; display:flex; align-items:center; justify-content:center; }
-    canvas { background:#05060a; image-rendering:pixelated; }
-    label { display:block; margin:8px 0 4px; font-size:13px; color:#ddd }
+    /* Body background is a soft gray for the entire page */
+    body { 
+      margin:0; 
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; 
+      background:#f0f0f0; 
+      color:#222; 
+      display:flex; 
+      height:100vh; 
+    }
+    #ui { 
+      width:320px; 
+      padding:16px; 
+      box-sizing:border-box; 
+      background:rgba(255,255,255,0.8); 
+      border-right:1px solid rgba(0,0,0,0.1); 
+    }
+    #canvasWrap { 
+      flex:1; 
+      display:flex; 
+      align-items:center; 
+      justify-content:center; 
+    }
+    /* The fluid simulation canvas background is set to pure white */
+    canvas { 
+      background:#ffffff; 
+      image-rendering:pixelated; 
+      border:1px solid #ccc; 
+    }
+    label { 
+      display:block; 
+      margin:8px 0 4px; 
+      font-size:13px; 
+      color:#222; 
+    }
     input[type=range] { width:100%; }
-    button { margin-right:8px; margin-top:8px; padding:8px 10px; background:#222; color:#eee; border:1px solid rgba(255,255,255,0.04); border-radius:6px; cursor:pointer }
+    button { 
+      margin-right:8px; 
+      margin-top:8px; 
+      padding:8px 10px; 
+      border:1px solid rgba(0,0,0,0.1); 
+      border-radius:6px; 
+      cursor:pointer 
+    }
+    #paintRed { background:#f55; color:#000; }
+    #paintGreen { background:#5f5; color:#000; }
+    #paintBlue { background:#55f; color:#000; }
+    #modeVelocity, #modeObstacle, #clearObstacles, #reset { 
+      background:#ddd; 
+      color:#222;
+    }
     .row { display:flex; gap:8px; align-items:center }
-    .small { font-size:12px; color:#bbb }
-    .hint { font-size:12px; color:#9aa; margin-top:8px }
+    .small { font-size:12px; color:#555 }
+    .hint { font-size:12px; color:#588; margin-top:8px }
   </style>
 </head>
 <body>
   <div id="ui">
-    <h2>Fluid sim — grid based</h2>
-    <div class="row"><button id="modeDensity">Add Density</button><button id="modeVelocity">Add Velocity</button><button id="modeObstacle">Toggle Obstacles</button></div>
-    <div class="row"><button id="clearObstacles">Clear Obstacles</button><button id="reset">Reset</button></div>
+    <h2>Color Fluid Mixer 🎨</h2>
 
-    <label>Grid size: <span id="gridSizeLabel">64</span></label>
-    <input id="gridSize" type="range" min="32" max="200" value="64" step="1">
+    <label>Paint Mode: <span id="colorModeLabel">RED</span></label>
+    <div class="row">
+      <button id="paintRed">Red</button>
+      <button id="paintGreen">Green</button>
+      <button id="paintBlue">Blue</button>
+    </div>
+    <div class="row">
+      <button id="modeVelocity">Add Velocity</button>
+      <button id="modeObstacle">Toggle Obstacles</button>
+    </div>
+    <div class="row">
+      <button id="clearObstacles">Clear Obstacles</button>
+      <button id="reset">Reset Sim</button>
+    </div>
+
+    <label>Grid size: <span id="gridSizeLabel">200</span></label>
+    <input id="gridSize" type="range" min="32" max="200" value="200" step="1">
 
     <label>Viscosity: <span id="viscLabel">0.0001</span></label>
     <input id="visc" type="range" min="0" max="0.1" step="0.0001" value="0.0001">
@@ -35,25 +91,25 @@
     <label>Force scale: <span id="forceLabel">5000</span></label>
     <input id="force" type="range" min="10" max="10000" step="10" value="5000">
 
-    <label>Source amount: <span id="sourceLabel">100</span></label>
-    <input id="source" type="range" min="1" max="1000" step="1" value="100">
+    <label>Source amount: <span id="sourceLabel">1000</span></label>
+    <input id="source" type="range" min="1" max="1000" step="1" value="1000">
 
     <label>Display: </label>
     <div class="row">
       <label style="display:inline-flex;align-items:center"><input id="showVelocity" type="checkbox"> <span class="small">Velocity</span></label>
-      <label style="display:inline-flex;align-items:center"><input id="showDensity" type="checkbox" checked> <span class="small">Density</span></label>
+      <label style="display:inline-flex;align-items:center"><input id="showDensity" type="checkbox" checked> <span class="small">Color Mix</span></label>
       <label style="display:inline-flex;align-items:center"><input id="showObstacles" type="checkbox" checked> <span class="small">Obstacles</span></label>
     </div>
 
-    <p class="hint">Click and drag to paint. Shift+drag to add velocity in the drag direction. Use <code>Toggle Obstacles</code> then click to place/remove solid cells.</p>
-    <p class="hint small">This uses a stable fluid solver (diffuse, project, advect). It's intended for educational / demo purposes.</p>
+    <p class="hint">Click to paint your chosen color. Drag to also add velocity and stir the fluid!</p>
+    <p class="hint small">This uses a stable fluid solver, applied independently to R, G, and B color channels for mixing.</p>
   </div>
   <div id="canvasWrap">
     <canvas id="c"></canvas>
   </div>
 
 <script>
-/* Stable fluid implementation (2D grid). Adapted for clarity and interactivity. */
+/* Stable fluid implementation (2D grid). Adapted for color mixing. */
 // Utility helpers
 function idx(x,y,N){ x = Math.max(0, Math.min(N-1, x)); y = Math.max(0, Math.min(N-1, y)); return x + y * N; }
 
@@ -61,8 +117,14 @@ class Fluid {
   constructor(N, dt, diff, visc){
     this.N = N; this.dt = dt; this.diff = diff; this.visc = visc;
     const size = N*N;
-    this.s = new Float32Array(size); // temp for density
-    this.density = new Float32Array(size);
+    
+    // Density/temp arrays split into R, G, B components
+    this.r = new Float32Array(size); // Red density
+    this.g = new Float32Array(size); // Green density
+    this.b = new Float32Array(size); // Blue density
+    this.r0 = new Float32Array(size); // Temp R
+    this.g0 = new Float32Array(size); // Temp G
+    this.b0 = new Float32Array(size); // Temp B
 
     this.Vx = new Float32Array(size);
     this.Vy = new Float32Array(size);
@@ -72,10 +134,15 @@ class Fluid {
     this.solid = new Uint8Array(size); // obstacle map, 1 = solid
   }
 
-  addDensity(x,y,amount){
+  addColor(x, y, rAmount, gAmount, bAmount){
     const id = idx(x,y,this.N);
-    if(!this.solid[id]) this.density[id] += amount;
+    if(!this.solid[id]){
+      this.r[id] += rAmount;
+      this.g[id] += gAmount;
+      this.b[id] += bAmount;
+    }
   }
+
   addVelocity(x,y,amountX,amountY){
     const id = idx(x,y,this.N);
     if(!this.solid[id]){ this.Vx[id] += amountX; this.Vy[id] += amountY; }
@@ -83,7 +150,8 @@ class Fluid {
 
   step(){
     const N = this.N, dt = this.dt;
-    // velocity step
+    
+    // Velocity Step: same as before
     this.diffuse(1, this.Vx0, this.Vx, this.visc, dt);
     this.diffuse(2, this.Vy0, this.Vy, this.visc, dt);
     this.project(this.Vx0, this.Vy0, this.Vx, this.Vy);
@@ -91,17 +159,26 @@ class Fluid {
     this.advect(2, this.Vy, this.Vy0, this.Vx0, this.Vy0, dt);
     this.project(this.Vx, this.Vy, this.Vx0, this.Vy0);
 
-    // density step
-    this.diffuse(0, this.s, this.density, this.diff, dt);
-    this.advect(0, this.density, this.s, this.Vx, this.Vy, dt);
+    // Density Step: now for R, G, and B components
+    this.diffuse(0, this.r0, this.r, this.diff, dt);
+    this.advect(0, this.r, this.r0, this.Vx, this.Vy, dt);
+    
+    this.diffuse(0, this.g0, this.g, this.diff, dt);
+    this.advect(0, this.g, this.g0, this.Vx, this.Vy, dt);
+    
+    this.diffuse(0, this.b0, this.b, this.diff, dt);
+    this.advect(0, this.b, this.b0, this.Vx, this.Vy, dt);
 
     // enforce solids: zero velocity and density into solids
     for(let i=0;i<N*N;i++){
-      if(this.solid[i]){ this.Vx[i]=0; this.Vy[i]=0; this.density[i]=0; }
+      if(this.solid[i]){ 
+        this.Vx[i]=0; this.Vy[i]=0; 
+        this.r[i]=0; this.g[i]=0; this.b[i]=0;
+      }
     }
   }
 
-  // linear solver: diffuse quantities
+  // linear solver: diffuse quantities (generic for R, G, B)
   diffuse(b, x, x0, diff, dt){
     const N = this.N; const a = dt * diff * (N-2) * (N-2);
     this.lin_solve(b, x, x0, a, 1 + 4*a);
@@ -177,7 +254,7 @@ class Fluid {
     x[(N-1)*N] = 0.5*(x[(N-1)*N + 1] + x[(N-2)*N]);
     x[N*N-1] = 0.5*(x[N*N-2] + x[N*(N-1)-1]);
 
-    // enforce solids boundary: if neighbor is solid, set velocity/density to zero at boundary
+    // enforce solids boundary
     for(let j=1;j<N-1;j++){
       for(let i=1;i<N-1;i++){
         const id = i + j*N;
@@ -205,7 +282,8 @@ window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
 let mouse = {x:0,y:0,px:0,py:0,down:false};
-let mode = 'density';
+let mode = 'red'; // Default mode is now 'red'
+const colorModeLabel = document.getElementById('colorModeLabel');
 
 function screenToGrid(sx, sy){
   const rect = canvas.getBoundingClientRect();
@@ -229,16 +307,23 @@ canvas.addEventListener('pointermove', (e)=>{
   const p = screenToGrid(e.clientX, e.clientY);
   if(mouse.down){
     const dx = p.x - mouse.px; const dy = p.y - mouse.py;
-    if(mode==='density' || mode==='velocity'){
+    
+    if(['red', 'green', 'blue', 'velocity'].includes(mode)){ 
       const steps = Math.max(Math.abs(dx), Math.abs(dy),1);
+      const sourceAmount = parseFloat(document.getElementById('source').value);
+      
       for(let i=0;i<steps;i++){
         const sx = Math.round(mouse.px + dx*(i/steps));
         const sy = Math.round(mouse.py + dy*(i/steps));
-        if(mode==='density') sim.addDensity(sx,sy, parseFloat(document.getElementById('source').value));
-        // if(mode==='velocity'){
-          const force = parseFloat(document.getElementById('force').value);
-          sim.addVelocity(sx,sy, (p.x-mouse.px)*force*0.0001, (p.y-mouse.py)*force*0.0001 );
-        // }
+        
+        // Add color based on the selected mode
+        if(mode==='red') sim.addColor(sx, sy, sourceAmount, 0, 0);
+        else if(mode==='green') sim.addColor(sx, sy, 0, sourceAmount, 0);
+        else if(mode==='blue') sim.addColor(sx, sy, 0, 0, sourceAmount);
+        
+        // Velocity (add forces for mixing/stirring)
+        const force = parseFloat(document.getElementById('force').value);
+        sim.addVelocity(sx,sy, (p.x-mouse.px)*force*0.0001, (p.y-mouse.py)*force*0.0001 );
       }
     } else if(mode==='obstacle'){
       const id = idx(p.x,p.y,sim.N);
@@ -251,9 +336,11 @@ canvas.addEventListener('pointermove', (e)=>{
 canvas.addEventListener('pointerup', (e)=>{ mouse.down=false; canvas.releasePointerCapture(e.pointerId); });
 
 // UI hooks
-document.getElementById('modeDensity').onclick = ()=>{ mode='density'; }
-document.getElementById('modeVelocity').onclick = ()=>{ mode='velocity'; }
-document.getElementById('modeObstacle').onclick = ()=>{ mode='obstacle'; }
+document.getElementById('paintRed').onclick = ()=>{ mode='red'; colorModeLabel.textContent = 'RED'; }
+document.getElementById('paintGreen').onclick = ()=>{ mode='green'; colorModeLabel.textContent = 'GREEN'; }
+document.getElementById('paintBlue').onclick = ()=>{ mode='blue'; colorModeLabel.textContent = 'BLUE'; }
+document.getElementById('modeVelocity').onclick = ()=>{ mode='velocity'; colorModeLabel.textContent = 'N/A (Velocity)'; }
+document.getElementById('modeObstacle').onclick = ()=>{ mode='obstacle'; colorModeLabel.textContent = 'N/A (Obstacle)'; }
 
 document.getElementById('clearObstacles').onclick = ()=>{ sim.solid.fill(0); }
 document.getElementById('reset').onclick = ()=>{ sim = new Fluid(sim.N, sim.dt, sim.diff, sim.visc); }
@@ -289,28 +376,37 @@ function draw(){
   const N = sim.N; const w = canvas.width; const h = canvas.height; const cellW = w / N; const cellH = h / N;
   ctx.clearRect(0,0,w,h);
   const img = ctx.createImageData(w,h);
-  // draw density as grayscale (or color map)
+  
+  // draw density as color mix
   if(showDensity.checked){
     // for each grid cell, fill its block of pixels
     for(let j=0;j<N;j++){
       for(let i=0;i<N;i++){
         const id = i + j*N;
-        const d = Math.min(255, sim.density[id]);
+        
+        // Read R, G, B densities and clamp/scale them to 0-255 range
+        const scale = 0.2; // Adjust for brightness/saturation
+        const maxColorValue = 255;
+        const r = Math.min(maxColorValue, sim.r[id] * scale);
+        const g = Math.min(maxColorValue, sim.g[id] * scale);
+        const b = Math.min(maxColorValue, sim.b[id] * scale);
+
         // fill cell rectangle
         const sx = Math.floor(i*cellW), sy = Math.floor(j*cellH);
         const ex = Math.ceil((i+1)*cellW), ey = Math.ceil((j+1)*cellH);
         for(let y=sy;y<ey;y++){
           for(let x=sx;x<ex;x++){
             const p = (x + y*w) * 4;
-            img.data[p] = d*1.6; // R
-            img.data[p+1] = Math.min(255,d*0.9);
-            img.data[p+2] = Math.max(0,255-d*0.6);
-            img.data[p+3] = 255;
+            img.data[p] = r;     // Red
+            img.data[p+1] = g;   // Green
+            img.data[p+2] = b;   // Blue
+            img.data[p+3] = 255; // Alpha
           }
         }
       }
     }
   }
+  
   // draw obstacles overlay
   if(showObstacles.checked){
     for(let j=0;j<N;j++){
@@ -322,7 +418,7 @@ function draw(){
           for(let y=sy;y<ey;y++){
             for(let x=sx;x<ex;x++){
               const p = (x + y*w) * 4;
-              img.data[p]=40; img.data[p+1]=40; img.data[p+2]=40; img.data[p+3]=255;
+              img.data[p]=180; img.data[p+1]=180; img.data[p+2]=180; img.data[p+3]=255; /* Light gray obstacle */
             }
           }
         }
@@ -334,7 +430,7 @@ function draw(){
   // draw velocity vectors
   if(showVelocity.checked){
     ctx.save();
-    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)'; /* Darker vectors for white background */
     ctx.lineWidth = 1;
     const step = Math.max(2, Math.floor(N/24));
     for(let j=1;j<N-1;j+=step){
@@ -357,16 +453,6 @@ function frame(){
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
-
-// initial smoke source
-(function seed(){
-  for(let j=sim.N/4|0;j<sim.N/2;j++){
-    for(let i=sim.N/3|0;i<sim.N*2/3;i++){
-      sim.density[i + j*sim.N] = Math.random()*30;
-    }
-  }
-})();
-
 </script>
 </body>
 </html>
